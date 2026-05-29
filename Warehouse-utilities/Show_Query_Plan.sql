@@ -1,0 +1,9 @@
+SET SHOWPLAN_XML ON;
+GO
+
+SELECT *
+FROM [Schema_Name].[Object_Name];
+GO
+
+SET SHOWPLAN_XML OFF;
+GO

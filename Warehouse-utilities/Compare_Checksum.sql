@@ -1,0 +1,11 @@
+SELECT
+    'OBJECT A' AS source,
+    COUNT(*) AS row_count,
+    CHECKSUM_AGG(BINARY_CHECKSUM(*)) AS table_checksum
+FROM DATABASE.SCHEMA.OBJECT_NAME
+UNION ALL
+SELECT
+    'OBJECT B' AS source,
+    COUNT(*) AS row_count,
+    CHECKSUM_AGG(BINARY_CHECKSUM(*)) AS table_checksum
+FROM DATABASE.SCHEMA.OBJECT_NAMEs;
