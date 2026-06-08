@@ -15,6 +15,7 @@ A collection of Microsoft Fabric utilities, scripts, templates, and automation t
 
 ```text
 Fabric-Toolkit/
+├── Medallion Architecture
 ├── Notebook-utilities/
 ├── Warehouse-utilities/
 ```
