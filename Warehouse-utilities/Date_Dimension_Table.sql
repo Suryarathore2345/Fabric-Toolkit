@@ -1,5 +1,6 @@
 -- ============================================================
 -- DATE DIMENSION - Microsoft Fabric Warehouse (T-SQL)
+-- Date Range : 2025-01-01 to 2035-12-31
 -- Fiscal Year: April start (month >= 4 → new FY)
 -- ============================================================
 
@@ -34,35 +35,13 @@ CREATE TABLE dbo.DimDate
 
 
 -- ------------------------------------------------------------
--- STEP 2: Populate using cross-join number generator
---         (No recursive CTE → no MAXRECURSION hint needed)
+-- STEP 2: Populate using GENERATE_SERIES()
+--         Generates one integer per day offset from start date
+--         No recursion, no hints, no workarounds needed
 -- ------------------------------------------------------------
 DECLARE @StartDate DATE = '2025-01-01';
 DECLARE @EndDate   DATE = '2035-12-31';
-DECLARE @TotalDays INT  = DATEDIFF(DAY, @StartDate, @EndDate) + 1;  -- 4018 days
 
-WITH
-N10 AS (
-    -- 10 rows: 0–9
-    SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
-    UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9
-),
-N100 AS (
-    -- 100 rows: 10 × 10
-    SELECT a.n * 10 + b.n AS n
-    FROM N10 a CROSS JOIN N10 b
-),
-N10000 AS (
-    -- 10,000 rows: 100 × 100  →  covers any range up to ~27 years
-    SELECT a.n * 100 + b.n AS n
-    FROM N100 a CROSS JOIN N100 b
-),
-DateSeries AS (
-    -- Convert numbers to dates, trim to exact range
-    SELECT DATEADD(DAY, n, @StartDate) AS cal_date
-    FROM   N10000
-    WHERE  n < @TotalDays
-)
 INSERT INTO dbo.DimDate
 (
     Date, Date_ID,
@@ -76,43 +55,30 @@ INSERT INTO dbo.DimDate
 SELECT
     -- ── Keys ─────────────────────────────────────────────────────
     cal_date                                                AS Date,
-    CONVERT(CHAR(8), cal_date, 112)                        AS Date_ID,   -- yyyyMMdd
+    CONVERT(CHAR(8), cal_date, 112)                        AS Date_ID,
 
     -- ── Day ──────────────────────────────────────────────────────
     CAST(DAY(cal_date) AS TINYINT)                         AS DayOfMonth,
-
-    -- Spark date_format(d,'E') → 3-letter day abbreviation
     LEFT(DATENAME(WEEKDAY, cal_date), 3)                   AS DayName,
-
-    -- Spark dayofweek(): 1=Sun … 7=Sat
     CAST(DATEPART(WEEKDAY, cal_date) AS TINYINT)           AS DayOfWeek,
 
-    -- IsWeekDay: false when Sun(1) or Sat(7)
     CAST(
         CASE WHEN DATEPART(WEEKDAY, cal_date) IN (1, 7) THEN 0 ELSE 1 END
     AS BIT)                                                AS IsWeekDay,
 
     -- ── Month / Week ─────────────────────────────────────────────
     CAST(MONTH(cal_date) AS TINYINT)                       AS Month,
-
-    -- Spark: ceil(day / 7.0)
     CAST(CEILING(DAY(cal_date) / 7.0) AS TINYINT)         AS WeekOfMonth,
-
     CAST(YEAR(cal_date) AS SMALLINT)                       AS Year,
-
-    -- Spark weekofyear() → ISO week number
     CAST(DATEPART(ISO_WEEK, cal_date) AS TINYINT)          AS WeekOfYear,
 
     -- ── Quarter ───────────────────────────────────────────────────
-    -- Spark: concat('Q-', quarter(cal_date))
     'Q-' + CAST(DATEPART(QUARTER, cal_date) AS CHAR(1))   AS QuarterName,
 
-    -- Spark: concat('Q-', quarter(cal_date), ',', yy)
     'Q-' + CAST(DATEPART(QUARTER, cal_date) AS CHAR(1))
         + ',' + RIGHT(CAST(YEAR(cal_date) AS CHAR(4)), 2) AS QuarterYear,
 
     -- ── Fiscal Year (April start) ─────────────────────────────────
-    -- Spark: month >= 4 → 'YYYY-YYYY+1'  else  'YYYY-1-YYYY'
     CASE
         WHEN MONTH(cal_date) >= 4
             THEN CAST(YEAR(cal_date)     AS VARCHAR(4)) + '-'
@@ -122,7 +88,6 @@ SELECT
             + CAST(YEAR(cal_date)     AS VARCHAR(4))
     END                                                    AS FiscalYear,
 
-    -- Spark: 'FYI YY-YY'  (2-digit years)
     CASE
         WHEN MONTH(cal_date) >= 4
             THEN 'FYI ' + RIGHT(CAST(YEAR(cal_date)     AS CHAR(4)), 2)
@@ -141,7 +106,7 @@ SELECT
         END
     AS BIT)                                                AS IsLeapYear,
 
-    -- ── Working / Holiday / Business Day flags ────────────────────
+    -- ── Flags ─────────────────────────────────────────────────────
     CAST(
         CASE WHEN DATEPART(WEEKDAY, cal_date) IN (1, 7) THEN 0 ELSE 1 END
     AS BIT)                                                AS IsWorkingDay,
@@ -156,14 +121,18 @@ SELECT
         CASE WHEN DATEPART(WEEKDAY, cal_date) IN (1, 7) THEN 0 ELSE 1 END
     AS BIT)                                                AS IsBusinessDay
 
-FROM DateSeries;
+FROM
+(
+    -- GENERATE_SERIES produces one row per day offset (0, 1, 2 … N)
+    -- DATEADD converts each offset into an actual date
+    SELECT DATEADD(DAY, value, @StartDate) AS cal_date
+    FROM   GENERATE_SERIES(0, DATEDIFF(DAY, @StartDate, @EndDate))
+) AS DateSeries;
 
 
 -- ------------------------------------------------------------
 -- STEP 3: Optional – mark public holidays from a reference table
 -- ------------------------------------------------------------
--- Once you maintain a dbo.HolidayList (HolidayDate, HolidayName):
---
 -- UPDATE d
 -- SET    d.IsHoliday     = 1,
 --        d.IsBusinessDay = 0,
@@ -186,3 +155,4 @@ SELECT
     Weekends     = SUM(CAST(IsHoliday  AS INT)),
     LeapYearDays = SUM(CAST(IsLeapYear AS INT))
 FROM dbo.DimDate;
+ 
