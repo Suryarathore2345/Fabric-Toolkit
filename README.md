@@ -18,6 +18,7 @@ Fabric-Toolkit/
 ├── Medallion Architecture
 ├── Notebook-utilities/
 ├── Warehouse-utilities/
+├── Workspace-Governance-Automation/
 ```
 
 ## 🛠 Technologies
