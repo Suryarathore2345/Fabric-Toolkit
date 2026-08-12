@@ -374,14 +374,14 @@
                                 "parameters": {
                                     "activity_name": {
                                         "value": "Run Auto Delete",
-                                        "type": "string"
+                                        "type": "Expression"
                                     },
                                     "error_message": {
                                         "value": "@activity('Run Auto Delete').Error.message",
                                         "type": "Expression"
                                     },
                                     "pipeline_name": {
-                                        "value": "@pipeline().Pipeline",
+                                        "value": "PL_Inventory_Governance",
                                         "type": "Expression"
                                     },
                                     "run_id": {
@@ -390,7 +390,7 @@
                                     },
                                     "workspace_id": {
                                         "value": "<WORKSPACE_ID>",
-                                        "type": "string"
+                                        "type": "Expression"
                                     }
                                 }
                             },
@@ -545,14 +545,14 @@
                     "parameters": {
                         "activity_name": {
                             "value": "Run Inventory Scan",
-                            "type": "string"
+                            "type": "Expression"
                         },
                         "error_message": {
                             "value": "@activity('Run Inventory Scan').Error.message",
                             "type": "Expression"
                         },
                         "pipeline_name": {
-                            "value": "@pipeline().Pipeline",
+                            "value": "PL_Inventory_Governance",
                             "type": "Expression"
                         },
                         "run_id": {
@@ -561,7 +561,7 @@
                         },
                         "workspace_id": {
                             "value": "<WORKSPACE_ID>",
-                            "type": "string"
+                            "type": "Expression"
                         }
                     }
                 },
@@ -595,14 +595,14 @@
                     "parameters": {
                         "activity_name": {
                             "value": "Run Tracker Update",
-                            "type": "string"
+                            "type": "Expression"
                         },
                         "error_message": {
                             "value": "@activity('Run Tracker Update').Error.message",
                             "type": "Expression"
                         },
                         "pipeline_name": {
-                            "value": "@pipeline().Pipeline",
+                            "value": "PL_Inventory_Governance",
                             "type": "Expression"
                         },
                         "run_id": {
@@ -611,7 +611,7 @@
                         },
                         "workspace_id": {
                             "value": "<WORKSPACE_ID>",
-                            "type": "string"
+                            "type": "Expression"
                         }
                     }
                 },
@@ -645,14 +645,14 @@
                     "parameters": {
                         "activity_name": {
                             "value": "Generate Emails",
-                            "type": "string"
+                            "type": "Expression"
                         },
                         "error_message": {
                             "value": "@activity('Generate Emails').Error.message",
                             "type": "Expression"
                         },
                         "pipeline_name": {
-                            "value": "@pipeline().Pipeline",
+                            "value": "PL_Inventory_Governance",
                             "type": "Expression"
                         },
                         "run_id": {
@@ -661,7 +661,7 @@
                         },
                         "workspace_id": {
                             "value": "<WORKSPACE_ID>",
-                            "type": "string"
+                            "type": "Expression"
                         }
                     }
                 },
@@ -695,14 +695,14 @@
                     "parameters": {
                         "activity_name": {
                             "value": "Mark Emails Sent",
-                            "type": "string"
+                            "type": "Expression"
                         },
                         "error_message": {
                             "value": "@activity('Mark Emails Sent').Error.message",
                             "type": "Expression"
                         },
                         "pipeline_name": {
-                            "value": "@pipeline().Pipeline",
+                            "value": "PL_Inventory_Governance",
                             "type": "Expression"
                         },
                         "run_id": {
@@ -711,7 +711,7 @@
                         },
                         "workspace_id": {
                             "value": "<WORKSPACE_ID>",
-                            "type": "string"
+                            "type": "Expression"
                         }
                     }
                 },
@@ -745,14 +745,14 @@
                     "parameters": {
                         "activity_name": {
                             "value": "For Each Admin",
-                            "type": "string"
+                            "type": "Expression"
                         },
                         "error_message": {
                             "value": "@activity('For Each Admin').Error.message",
                             "type": "Expression"
                         },
                         "pipeline_name": {
-                            "value": "@pipeline().Pipeline",
+                            "value": "PL_Inventory_Governance",
                             "type": "Expression"
                         },
                         "run_id": {
@@ -761,7 +761,7 @@
                         },
                         "workspace_id": {
                             "value": "<WORKSPACE_ID>",
-                            "type": "string"
+                            "type": "Expression"
                         }
                     }
                 },
@@ -795,14 +795,14 @@
                     "parameters": {
                         "activity_name": {
                             "value": "For Each Owner",
-                            "type": "string"
+                            "type": "Expression"
                         },
                         "error_message": {
                             "value": "@activity('For Each Owner').Error.message",
                             "type": "Expression"
                         },
                         "pipeline_name": {
-                            "value": "@pipeline().Pipeline",
+                            "value": "PL_Inventory_Governance",
                             "type": "Expression"
                         },
                         "run_id": {
@@ -811,7 +811,7 @@
                         },
                         "workspace_id": {
                             "value": "<WORKSPACE_ID>",
-                            "type": "string"
+                            "type": "Expression"
                         }
                     }
                 },
@@ -845,14 +845,14 @@
                     "parameters": {
                         "activity_name": {
                             "value": "For Each Deletion",
-                            "type": "string"
+                            "type": "Expression"
                         },
                         "error_message": {
                             "value": "@activity('For Each Deletion').Error.message",
                             "type": "Expression"
                         },
                         "pipeline_name": {
-                            "value": "@pipeline().Pipeline",
+                            "value": "PL_Inventory_Governance",
                             "type": "Expression"
                         },
                         "run_id": {
@@ -861,7 +861,7 @@
                         },
                         "workspace_id": {
                             "value": "<WORKSPACE_ID>",
-                            "type": "string"
+                            "type": "Expression"
                         }
                     }
                 },
