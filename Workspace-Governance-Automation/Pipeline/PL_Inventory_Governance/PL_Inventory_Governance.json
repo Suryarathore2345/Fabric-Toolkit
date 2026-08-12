@@ -422,7 +422,7 @@
                 "typeProperties": {
                     "source": {
                         "type": "DataWarehouseSource",
-                        "sqlReaderQuery": "SELECT * FROM Governance.email_outbox WHERE email_type = 'deletion_confirmation' AND status = 'pending'",
+                        "sqlReaderQuery": "SELECT * FROM Governance.email_outbox WHERE email_type IN ('deletion_confirmation', 'deletion_manual_action_required', 'deletion_summary_admin') AND status = 'pending'",
                         "queryTimeout": "02:00:00",
                         "partitionOption": "None"
                     },
