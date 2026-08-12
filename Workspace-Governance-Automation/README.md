@@ -1,5 +1,9 @@
 # Fabric Workspace Governance Automation — Project README
 
+**Project:** Fabric-Monitoring-POC
+**Owner:** Pankaj Bana
+**Workspace:** MS Fabric Demo (`<WORKSPACE_ID>`)
+**Governance admin (report recipient):** <ADMIN_EMAIL>
 **Status:** In testing (notification-only; auto-delete disabled)
 
 ---
@@ -61,7 +65,7 @@ Fabric-Monitoring-POC/
 │   └── Test_Outlook                                      throwaway email-delivery test
 │
 ├── Governance/                     (the automation engine — 6 notebooks)
-│   ├── Governance_Table_Setup            creates the Delta tables (run once)
+│   ├── Governance_Table_Setup            creates the Governance schema + tables in DW_Fabric (run once)
 │   ├── Governance_Tracker_Update         escalation logic (the brain)
 │   ├── Governance_Email_Generator        builds HTML emails
 │   ├── Governance_Auto_Delete            deletes items past 3 warnings
@@ -100,20 +104,26 @@ Fabric-Monitoring-POC/
 - **Runtime:** ~2 min per workspace (most of it the 30-day Activity Events walk).
 
 #### `Governance_Table_Setup` (Governance/)
-**Run once.** Creates all governance Delta tables and seeds default config.
+**Run once.** Creates the `Governance` schema and all governance tables in the `DW_Fabric`
+Warehouse, and seeds default config.
 
-- **Reads from:** nothing
-- **Writes to:** `cleanup_tracker`, `cleanup_audit_log`, `email_outbox`, `governance_config`
-- **Permission:** Contributor
-- **Note:** don't re-run to reset data — it overwrites `governance_config` (wiping the logo and
-  test-mode setting). Use targeted `DELETE` statements instead.
+- **Reads from:** nothing (except the Xebia logo PNG, read from the attached Lakehouse's Files
+  area — Warehouses have no Files area, so a Lakehouse still needs to be attached for that one
+  read)
+- **Writes to:** `Governance.cleanup_tracker`, `Governance.cleanup_audit_log`,
+  `Governance.email_outbox`, `Governance.governance_config`,
+  `Governance.workspace_inventory_snapshot`, `Governance.deleted_items_archive`
+- **Permission:** Contributor on `DW_Fabric`
+- **Note:** don't re-run to reset data — it drops and recreates every table, wiping
+  `governance_config` (logo, test-mode setting) and all tracked history. Use targeted
+  `DELETE`/`UPDATE` statements instead.
 
 #### `Governance_Tracker_Update` (Governance/)
 **The brain.** Decides what happens to each item this run.
 
 - **Reads from:** `workspace_inventory_snapshot` (latest), `cleanup_tracker`, `governance_config`
 - **Writes to:** `cleanup_tracker`, `cleanup_audit_log`
-- **Permission:** Contributor (pure Delta operations, no APIs)
+- **Permission:** Contributor (pure Warehouse SQL operations, no APIs)
 - **Logic, each run:**
   - **New candidates** — items scoring ≥ threshold, not yet tracked → added as `new`
   - **Resolved** — tracked items the owner acted on (modified, used, deleted, or score dropped)
@@ -195,9 +205,12 @@ activities (5 governance notebooks + the 3 owner/admin/deletion email send-loops
 
 ---
 
-## 5. Delta tables — what each one holds
+## 5. Governance tables — what each one holds
 
-All tables live in the `LK_Fabric` Lakehouse.
+All tables live in the `Governance` schema of the `DW_Fabric` Warehouse (migrated from the
+original `LK_Fabric` Lakehouse/Delta implementation — every notebook now connects via raw
+`pyodbc` + an AAD token instead of `spark.sql`, and every column is `NVARCHAR` to match the
+original string-everywhere convention).
 
 ### `workspace_inventory_snapshot`
 The raw inventory. One row per item per scan. Appended each run (history preserved via
@@ -277,8 +290,8 @@ Key-value configuration. Change behaviour here, never in code.
 | protected_items | (empty) | Specific item IDs never deleted |
 | enable_auto_delete | false | Master delete switch |
 | dry_run | true | Simulate deletes without executing |
-| workspace_ids | (workspace GUID) | Comma-separated workspaces to scan |
-| test_mode_recipient | <ADMIN_EMAIL> | Redirect ALL emails here (blank to disable) |
+| workspace_ids | <WORKSPACE_ID> | Comma-separated workspaces to scan |
+| test_mode_recipient | (empty) | Redirect ALL emails here for testing (blank to disable) |
 | logo_url | (base64) | Xebia logo embedded in emails |
 | pipeline_failure_notify_email | (empty) | Recipient for pipeline activity-failure alerts (blank = falls back to admin_email) |
 
@@ -305,27 +318,35 @@ Each item accumulates points from six signals. Higher = stronger deletion candid
 
 ## 7. The pipeline — `PL_Inventory_Governance`
 
-Orchestrates the notebooks and sends emails on a schedule. 11 stages:
+Orchestrates the notebooks and sends emails on a schedule.
 
 ```
 Run Inventory Scan          [DEACTIVATED during testing — needs Fabric Admin]
   └→ Run Tracker Update
        └→ Generate Emails
-            └→ Lookup Outbox                     (read email_outbox, Table mode)
-                 └→ Filter Admin Email
-                      └→ For Each Admin → Send Admin Report
-                           └→ Filter Owner Emails       (owner_warning* + orphan_warning*)
-                                └→ For Each Owner → Send Owner Email
-                                     └→ Lookup Config
-                                          └→ Filter Delete Flag
-                                               └→ Check Auto Delete Enabled
-                                                    ├ True: Run Auto Delete
-                                                    └ False: (empty)
-                                                    └→ Lookup Outbox After Delete
-                                                         └→ Filter Deletion Emails
-                                                              └→ For Each Deletion → Send Deletion Email
-                                                                   └→ Mark Emails Sent
+            ├→ Lookup Admin Emails    (targeted SQL: email_type='admin_report' AND status='pending')
+            │     └→ For Each Admin → Send Admin Report
+            └→ Lookup Owner Emails    (targeted SQL: owner_warning*/orphan_warning* AND status='pending')
+                  └→ For Each Owner → Send Owner Email
+                        (both branches above run in parallel — no dependency between them)
+                             └→ Lookup Auto Delete Flag   (targeted SQL: config_key='enable_auto_delete')
+                                  └→ Check Auto Delete Enabled
+                                       ├ True: Run Auto Delete
+                                       └ False: (empty)
+                                       └→ Lookup Deletion Emails  (targeted SQL: email_type='deletion_confirmation' AND status='pending')
+                                            └→ For Each Deletion → Send Deletion Email
+                                                 └→ Mark Emails Sent
 ```
+
+**Warehouse Lookups, not Lakehouse + Filter.** Since the backend moved to `DW_Fabric`, every
+Lookup now runs a targeted `DataWarehouseSource` SQL query directly against
+`Governance.email_outbox` / `Governance.governance_config`, instead of reading the whole table
+and narrowing it in memory with a separate `Filter` activity. This collapsed 4 `Lookup + Filter`
+pairs down to 4 plain Lookups, and let `Lookup Admin Emails`/`Lookup Owner Emails` run in
+parallel (previously the single shared `Lookup Outbox` forced the admin and owner branches to
+run one after another). `Check Auto Delete Enabled` now waits on **both** parallel branches
+completing before it runs, since it used to depend only on `For Each Owner` back when Owner ran
+strictly after Admin.
 
 > ⚠️ **Before you ever activate "Run Inventory Scan":** its `notebookId` in the pipeline JSON is
 > currently the literal placeholder `PASTE_INVENTORY_V32_NOTEBOOK_ID_HERE` — it was never filled
@@ -348,7 +369,10 @@ has a parallel failure branch: `[Activity] --(Failed)--> Notify Failure notebook
 Alert (Invoke pipeline)`. The notebook builds the branded HTML and writes one row to
 `email_outbox`; the "Invoke pipeline" step calls the separate `PL_Send_Failure_Alert` pipeline,
 passing that row's exact `email_id` (via `notebookutils.notebook.exit(...)`), which does the
-actual `Lookup Outbox → Filter Alert → For Each Alert → Send Office365Email` delivery. This lives
+actual `Lookup Outbox → Filter Alert → For Each Alert → Send Office365Email` delivery (the one
+remaining Lookup+Filter pair in the project — `Filter Alert` narrows to the exact dynamic
+`email_id` returned by `Notify Failure`, which needs the pipeline's own expression engine, not a
+static SQL `WHERE` clause, so it wasn't folded into the Lookup like the others). This lives
 in its own pipeline rather than inline so the same delivery logic isn't duplicated 8 times across
 the main canvas. It fires independently of the main success chain, so one activity's failure never
 blocks another's alert, and it works no matter where in the pipeline the failure happened.
@@ -364,10 +388,11 @@ which specific recipient's send failed). Recipient is `pipeline_failure_notify_e
 - **Notebooks generate, pipeline delivers.** Emails are built by notebooks and written to
   `email_outbox`; the pipeline reads them and sends via the Office 365 Outlook activity. No email
   credentials live in notebooks.
-- **Filter, not SQL query.** The Lakehouse connector only supports Table mode. So the outbox is
-  read once and sliced in memory with Filter activities.
+- **Targeted SQL Lookups, not Table mode + Filter.** The Warehouse connector supports Query mode,
+  so each Lookup runs its own `WHERE`-scoped `sqlReaderQuery` directly against
+  `Governance.email_outbox` instead of pulling the whole table and slicing it in memory.
 - **ForEach can't nest in If.** The deletion-email chain sits at the top level after the If, gated
-  implicitly (no deletions = empty filter = no-op loop).
+  implicitly (no deletions = empty Lookup result = no-op loop).
 - **Deletion needs a second outbox read** — confirmation rows don't exist when the first read runs.
 
 **Email delivery — two hard-won rules:**
@@ -492,25 +517,32 @@ UPDATE governance_config SET config_value = 'true'  WHERE config_key = 'dry_run'
   GUID. If you reorganize folders, verify the pipeline's notebook IDs still match.
 - **Outlook connection is user-bound.** Deploying the pipeline to another workspace needs
   re-authentication there. For production, use a shared mailbox/service account.
-- **`getToken("pbi")` is not enough for deleting newer item types, even as Workspace Admin.**
-  `Governance_Auto_Delete` calls `https://api.fabric.microsoft.com/v1/...`, but
-  `notebookutils.credentials.getToken("pbi")` returns a Power BI-audience token with a
-  restricted scope — it covers legacy Power BI item types (Report, SemanticModel) but 401s on
-  DELETE for newer unified Fabric item types (Notebook, Eventhouse, Eventstream, KQLDatabase,
-  SparkJobDefinition, DataPipeline, Reflex), even when the identity has full Workspace Admin
-  and can delete the same item fine through the Fabric UI. Fixed by requesting
-  `notebookutils.credentials.getToken("https://api.fabric.microsoft.com")` instead — a
-  Fabric-audience token — for any notebook that calls the Fabric Items API for write/delete
-  operations. `Fabric_Workspace_Inventory_v4` still uses `"pbi"` deliberately, since it also
-  reads from `api.powerbi.com` (Activity Events) which needs that audience specifically, and
-  it only ever reads, never deletes.
-- **Dataflow deletion likely needs its own endpoint, not the generic Items API.** A `400
-  OperationNotSupportedForItem` on DELETE for a Dataflow (vs. `401` for the permission issue
-  above) points to the generic `/items/{id}` endpoint not supporting that type — Microsoft's
-  docs describe a separate Dataflow-specific API surface. `Governance_Auto_Delete` now retries
-  via `/workspaces/{id}/dataflows/{id}` on that specific error, inferred from this project's
-  own `TYPE_URL_MAP` (Inventory notebook) rather than confirmed against a live tenant — treat
-  it as unverified until tested.
+- **A stale token in a long-running notebook session can cause phantom 401s on delete —
+  restart the session if you see this.** During testing, `Governance_Auto_Delete` 401'd on
+  Notebook/Report/SemanticModel/DataPipeline/SparkJobDefinition/Reflex deletes despite the
+  identity having full Workspace Admin and being able to delete the same items fine through
+  the UI. Switching to a Fabric-audience token (`getToken("https://api.fabric.microsoft.com")`)
+  was tried first and did **not** fix it — a red herring. The actual fix was restarting the
+  notebook's session: a completely fresh `getToken("pbi")` call succeeded on every one of
+  those 6 types, confirmed via a follow-up GET (not just trusting the DELETE status code).
+  `Governance_Auto_Delete` uses `"pbi"` for exactly this reason — it's the audience that's
+  actually confirmed to work, not the newer Fabric-audience one.
+- **Dataflow deletion needs the classic Power BI Dataflow API, not the Fabric Items API at
+  all.** Confirmed: Dataflows don't even appear in a `GET .../items` listing, and the generic
+  `/items/{id}` DELETE always 400s (`OperationNotSupportedForItem`) — Dataflows still live in
+  the classic Power BI backend, not Fabric's unified item catalog. `Governance_Auto_Delete`
+  routes Dataflow deletes to `https://api.powerbi.com/v1.0/myorg/groups/{workspaceId}/dataflows/{dataflowId}`
+  instead, confirmed working via a real test (list count dropped, target ID confirmed absent).
+- **Eventhouse, Eventstream, and KQLDatabase cannot currently be auto-deleted at all —
+  confirmed, not a session/token issue.** Even after the session-restart fix above resolved 6
+  other types, these 3 still 401 consistently, same Admin identity, same fresh token. These
+  three are architecturally coupled (Eventstream routes into Eventhouse, which contains KQL
+  Databases) and likely sit behind a separate Real-Time Intelligence permission layer (KQL
+  Database Admin/User/Viewer) independent of Fabric workspace roles — Reflex, despite also
+  being RTI-family, isn't gated the same way and deletes fine. No code fix addresses this;
+  `Governance_Auto_Delete`'s existing failure handling (reset to `warning_3`, retry next run,
+  plus the `deletion_manual_action_required` owner email and `deletion_summary_admin` report)
+  already covers this gracefully — these 3 types are effectively manual-deletion-only for now.
 
 ---
 
