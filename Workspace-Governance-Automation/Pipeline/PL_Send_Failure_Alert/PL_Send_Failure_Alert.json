@@ -19,23 +19,38 @@
                     "workspaceId": "<WORKSPACE_ID>",
                     "parameters": {
                         "activity_name": {
-                            "value": "@pipeline().parameters.activity_name",
+                            "value": {
+                                "value": "@pipeline().parameters.activity_name",
+                                "type": "Expression"
+                            },
                             "type": "string"
                         },
                         "error_message": {
-                            "value": "@pipeline().parameters.error_message",
+                            "value": {
+                                "value": "@pipeline().parameters.error_message",
+                                "type": "Expression"
+                            },
                             "type": "string"
                         },
                         "pipeline_name": {
-                            "value": "@pipeline().parameters.pipeline_name",
+                            "value": {
+                                "value": "@pipeline().parameters.pipeline_name",
+                                "type": "Expression"
+                            },
                             "type": "string"
                         },
                         "run_id": {
-                            "value": "@pipeline().parameters.run_id",
+                            "value": {
+                                "value": "@pipeline().parameters.run_id",
+                                "type": "Expression"
+                            },
                             "type": "string"
                         },
                         "workspace_id": {
-                            "value": "@pipeline().parameters.workspace_id",
+                            "value": {
+                                "value": "@pipeline().parameters.workspace_id",
+                                "type": "Expression"
+                            },
                             "type": "string"
                         }
                     }
