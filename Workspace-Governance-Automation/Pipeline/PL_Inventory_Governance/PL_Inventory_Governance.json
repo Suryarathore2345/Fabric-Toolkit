@@ -1,1 +1,876 @@
-{"$schema":"http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#","contentVersion":"1.0.0.0","parameters":{"fabric_Monitoring_connection pankaj.bana":{"type":"string"},"LK_Fabric":{"type":"string"},"MicrosoftOutlook pankaj.bana (3)":{"type":"string"}},"variables":{},"resources":[{"name":"PL_Inventory_Governance","type":"pipelines","apiVersion":"2018-06-01","properties":{"activities":[{"name":"Run Inventory Scan","type":"TridentNotebook","state":"Inactive","onInactiveMarkAs":"Succeeded","dependsOn":[],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"notebookId":"2176991a-981f-496e-b8f6-e85f480ad9bb","workspaceId":"<WORKSPACE_ID>"},"externalReferences":{"connection":"[parameters('fabric_Monitoring_connection pankaj.bana')]"}},{"name":"Run Tracker Update","type":"TridentNotebook","dependsOn":[{"activity":"Run Inventory Scan","dependencyConditions":["Succeeded"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"notebookId":"5c3241b7-0a0d-424a-9b1b-f0e1b748f7c4","workspaceId":"<WORKSPACE_ID>"},"externalReferences":{"connection":"[parameters('fabric_Monitoring_connection pankaj.bana')]"}},{"name":"Generate Emails","type":"TridentNotebook","dependsOn":[{"activity":"Run Tracker Update","dependencyConditions":["Succeeded"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"notebookId":"845fe367-268b-4a34-b665-8f0d02c141ea","workspaceId":"<WORKSPACE_ID>"},"externalReferences":{"connection":"[parameters('fabric_Monitoring_connection pankaj.bana')]"}},{"name":"Lookup Outbox","type":"Lookup","dependsOn":[{"activity":"Generate Emails","dependencyConditions":["Succeeded"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"source":{"type":"LakehouseTableSource"},"firstRowOnly":false,"datasetSettings":{"annotations":[],"linkedService":{"name":"LK_Fabric","properties":{"annotations":[],"type":"Lakehouse","typeProperties":{"workspaceId":"<WORKSPACE_ID>","artifactId":"[parameters('LK_Fabric')]","rootFolder":"Tables"}}},"type":"LakehouseTable","schema":[],"typeProperties":{"table":"email_outbox"}}}},{"name":"Filter Admin Email","type":"Filter","dependsOn":[{"activity":"Lookup Outbox","dependencyConditions":["Succeeded"]}],"typeProperties":{"items":{"value":"@activity('Lookup Outbox').output.value","type":"Expression"},"condition":{"value":"@and(equals(item().email_type, 'admin_report'), equals(item().status, 'pending'))","type":"Expression"}}},{"name":"For Each Admin","type":"ForEach","dependsOn":[{"activity":"Filter Admin Email","dependencyConditions":["Succeeded"]}],"typeProperties":{"items":{"value":"@activity('Filter Admin Email').output.value","type":"Expression"},"isSequential":true,"activities":[{"name":"Send Admin Report","type":"Office365Email","dependsOn":[],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"to":{"value":"@item().recipient","type":"Expression"},"subject":{"value":"@item().subject","type":"Expression"},"body":"@item().body_html"},"externalReferences":{"connection":"[parameters('MicrosoftOutlook pankaj.bana (3)')]"}}]}},{"name":"Filter Owner Emails","type":"Filter","dependsOn":[{"activity":"For Each Admin","dependencyConditions":["Completed"]}],"typeProperties":{"items":{"value":"@activity('Lookup Outbox').output.value","type":"Expression"},"condition":{"value":"@and(or(startswith(item().email_type, 'owner_warning'), startswith(item().email_type, 'orphan_warning')), equals(item().status, 'pending'))","type":"Expression"}}},{"name":"For Each Owner","type":"ForEach","dependsOn":[{"activity":"Filter Owner Emails","dependencyConditions":["Succeeded"]}],"typeProperties":{"items":{"value":"@activity('Filter Owner Emails').output.value","type":"Expression"},"isSequential":true,"activities":[{"name":"Send Owner Email","type":"Office365Email","dependsOn":[],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"to":{"value":"@item().recipient","type":"Expression"},"subject":{"value":"@item().subject","type":"Expression"},"body":"@item().body_html"},"externalReferences":{"connection":"[parameters('MicrosoftOutlook pankaj.bana (3)')]"}}]}},{"name":"Lookup Config","type":"Lookup","dependsOn":[{"activity":"For Each Owner","dependencyConditions":["Completed"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"source":{"type":"LakehouseTableSource"},"firstRowOnly":false,"datasetSettings":{"annotations":[],"linkedService":{"name":"LK_Fabric","properties":{"annotations":[],"type":"Lakehouse","typeProperties":{"workspaceId":"<WORKSPACE_ID>","artifactId":"[parameters('LK_Fabric')]","rootFolder":"Tables"}}},"type":"LakehouseTable","schema":[],"typeProperties":{"table":"governance_config"}}}},{"name":"Filter Delete Flag","type":"Filter","dependsOn":[{"activity":"Lookup Config","dependencyConditions":["Succeeded"]}],"typeProperties":{"items":{"value":"@activity('Lookup Config').output.value","type":"Expression"},"condition":{"value":"@equals(item().config_key, 'enable_auto_delete')","type":"Expression"}}},{"name":"Check Auto Delete Enabled","type":"IfCondition","dependsOn":[{"activity":"Filter Delete Flag","dependencyConditions":["Succeeded"]}],"typeProperties":{"expression":{"value":"@equals(toLower(activity('Filter Delete Flag').output.value[0].config_value), 'true')","type":"Expression"},"ifFalseActivities":[],"ifTrueActivities":[{"name":"Run Auto Delete","type":"TridentNotebook","dependsOn":[],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"notebookId":"1361e23f-3db3-4cec-b565-06d85ee49901","workspaceId":"<WORKSPACE_ID>"},"externalReferences":{"connection":"[parameters('fabric_Monitoring_connection pankaj.bana')]"}},{"name":"Notify Failure - Run Auto Delete","type":"TridentNotebook","dependsOn":[{"activity":"Run Auto Delete","dependencyConditions":["Failed"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"notebookId":"6c30182f-ba5e-4edd-aad2-454bfaf62213","workspaceId":"<WORKSPACE_ID>","parameters":{"activity_name":{"value":"Run Auto Delete","type":"string"},"error_message":{"value":{"value":"@activity('Run Auto Delete').Error.message","type":"Expression"},"type":"string"},"pipeline_name":{"value":{"value":"@pipeline().Pipeline","type":"Expression"},"type":"string"},"run_id":{"value":{"value":"@pipeline().RunId","type":"Expression"},"type":"string"},"workspace_id":{"value":"<WORKSPACE_ID>","type":"string"}}},"externalReferences":{"connection":"[parameters('fabric_Monitoring_connection pankaj.bana')]"}},{"name":"Send Failure Alert - Run Auto Delete","type":"InvokePipeline","dependsOn":[{"activity":"Notify Failure - Run Auto Delete","dependencyConditions":["Succeeded"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"waitOnCompletion":true,"operationType":"InvokeFabricPipeline","pipelineId":"e43c86d3-8def-4a87-a746-86bf9405c777","workspaceId":"<WORKSPACE_ID>","parameters":{"email_id":{"value":"@activity('Notify Failure - Run Auto Delete').output.result.exitValue","type":"Expression"}}}}]}},{"name":"Lookup Outbox After Delete","type":"Lookup","dependsOn":[{"activity":"Check Auto Delete Enabled","dependencyConditions":["Completed"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"source":{"type":"LakehouseTableSource"},"firstRowOnly":false,"datasetSettings":{"annotations":[],"linkedService":{"name":"LK_Fabric","properties":{"annotations":[],"type":"Lakehouse","typeProperties":{"workspaceId":"<WORKSPACE_ID>","artifactId":"[parameters('LK_Fabric')]","rootFolder":"Tables"}}},"type":"LakehouseTable","schema":[],"typeProperties":{"table":"email_outbox"}}}},{"name":"Filter Deletion Emails","type":"Filter","dependsOn":[{"activity":"Lookup Outbox After Delete","dependencyConditions":["Succeeded"]}],"typeProperties":{"items":{"value":"@activity('Lookup Outbox After Delete').output.value","type":"Expression"},"condition":{"value":"@and(equals(item().email_type, 'deletion_confirmation'), equals(item().status, 'pending'))","type":"Expression"}}},{"name":"For Each Deletion","type":"ForEach","dependsOn":[{"activity":"Filter Deletion Emails","dependencyConditions":["Succeeded"]}],"typeProperties":{"items":{"value":"@activity('Filter Deletion Emails').output.value","type":"Expression"},"isSequential":true,"activities":[{"name":"Send Deletion Email","type":"Office365Email","dependsOn":[],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"to":{"value":"@item().recipient","type":"Expression"},"subject":{"value":"@item().subject","type":"Expression"},"body":"@item().body_html"},"externalReferences":{"connection":"[parameters('MicrosoftOutlook pankaj.bana (3)')]"}}]}},{"name":"Mark Emails Sent","type":"TridentNotebook","dependsOn":[{"activity":"For Each Deletion","dependencyConditions":["Completed"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"notebookId":"a8a382a5-087d-409a-925e-1644c060d1ea","workspaceId":"<WORKSPACE_ID>"},"externalReferences":{"connection":"[parameters('fabric_Monitoring_connection pankaj.bana')]"}},{"name":"Notify Failure - Run Inventory Scan","type":"TridentNotebook","dependsOn":[{"activity":"Run Inventory Scan","dependencyConditions":["Failed"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"notebookId":"6c30182f-ba5e-4edd-aad2-454bfaf62213","workspaceId":"<WORKSPACE_ID>","parameters":{"activity_name":{"value":"Run Inventory Scan","type":"string"},"error_message":{"value":{"value":"@activity('Run Inventory Scan').Error.message","type":"Expression"},"type":"string"},"pipeline_name":{"value":{"value":"@pipeline().Pipeline","type":"Expression"},"type":"string"},"run_id":{"value":{"value":"@pipeline().RunId","type":"Expression"},"type":"string"},"workspace_id":{"value":"<WORKSPACE_ID>","type":"string"}}},"externalReferences":{"connection":"[parameters('fabric_Monitoring_connection pankaj.bana')]"}},{"name":"Send Failure Alert - Run Inventory Scan","type":"InvokePipeline","dependsOn":[{"activity":"Notify Failure - Run Inventory Scan","dependencyConditions":["Succeeded"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"waitOnCompletion":true,"operationType":"InvokeFabricPipeline","pipelineId":"e43c86d3-8def-4a87-a746-86bf9405c777","workspaceId":"<WORKSPACE_ID>","parameters":{"email_id":{"value":"@activity('Notify Failure - Run Inventory Scan').output.result.exitValue","type":"Expression"}}}},{"name":"Notify Failure - Run Tracker Update","type":"TridentNotebook","dependsOn":[{"activity":"Run Tracker Update","dependencyConditions":["Failed"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"notebookId":"6c30182f-ba5e-4edd-aad2-454bfaf62213","workspaceId":"<WORKSPACE_ID>","parameters":{"activity_name":{"value":"Run Tracker Update","type":"string"},"error_message":{"value":{"value":"@activity('Run Tracker Update').Error.message","type":"Expression"},"type":"string"},"pipeline_name":{"value":{"value":"@pipeline().Pipeline","type":"Expression"},"type":"string"},"run_id":{"value":{"value":"@pipeline().RunId","type":"Expression"},"type":"string"},"workspace_id":{"value":"<WORKSPACE_ID>","type":"string"}}},"externalReferences":{"connection":"[parameters('fabric_Monitoring_connection pankaj.bana')]"}},{"name":"Send Failure Alert - Run Tracker Update","type":"InvokePipeline","dependsOn":[{"activity":"Notify Failure - Run Tracker Update","dependencyConditions":["Succeeded"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"waitOnCompletion":true,"operationType":"InvokeFabricPipeline","pipelineId":"e43c86d3-8def-4a87-a746-86bf9405c777","workspaceId":"<WORKSPACE_ID>","parameters":{"email_id":{"value":"@activity('Notify Failure - Run Tracker Update').output.result.exitValue","type":"Expression"}}}},{"name":"Notify Failure - Generate Emails","type":"TridentNotebook","dependsOn":[{"activity":"Generate Emails","dependencyConditions":["Failed"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"notebookId":"6c30182f-ba5e-4edd-aad2-454bfaf62213","workspaceId":"<WORKSPACE_ID>","parameters":{"activity_name":{"value":"Generate Emails","type":"string"},"error_message":{"value":{"value":"@activity('Generate Emails').Error.message","type":"Expression"},"type":"string"},"pipeline_name":{"value":{"value":"@pipeline().Pipeline","type":"Expression"},"type":"string"},"run_id":{"value":{"value":"@pipeline().RunId","type":"Expression"},"type":"string"},"workspace_id":{"value":"<WORKSPACE_ID>","type":"string"}}},"externalReferences":{"connection":"[parameters('fabric_Monitoring_connection pankaj.bana')]"}},{"name":"Send Failure Alert - Generate Emails","type":"InvokePipeline","dependsOn":[{"activity":"Notify Failure - Generate Emails","dependencyConditions":["Succeeded"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"waitOnCompletion":true,"operationType":"InvokeFabricPipeline","pipelineId":"e43c86d3-8def-4a87-a746-86bf9405c777","workspaceId":"<WORKSPACE_ID>","parameters":{"email_id":{"value":"@activity('Notify Failure - Generate Emails').output.result.exitValue","type":"Expression"}}}},{"name":"Notify Failure - Mark Emails Sent","type":"TridentNotebook","dependsOn":[{"activity":"Mark Emails Sent","dependencyConditions":["Failed"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"notebookId":"6c30182f-ba5e-4edd-aad2-454bfaf62213","workspaceId":"<WORKSPACE_ID>","parameters":{"activity_name":{"value":"Mark Emails Sent","type":"string"},"error_message":{"value":{"value":"@activity('Mark Emails Sent').Error.message","type":"Expression"},"type":"string"},"pipeline_name":{"value":{"value":"@pipeline().Pipeline","type":"Expression"},"type":"string"},"run_id":{"value":{"value":"@pipeline().RunId","type":"Expression"},"type":"string"},"workspace_id":{"value":"<WORKSPACE_ID>","type":"string"}}},"externalReferences":{"connection":"[parameters('fabric_Monitoring_connection pankaj.bana')]"}},{"name":"Send Failure Alert - Mark Emails Sent","type":"InvokePipeline","dependsOn":[{"activity":"Notify Failure - Mark Emails Sent","dependencyConditions":["Succeeded"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"waitOnCompletion":true,"operationType":"InvokeFabricPipeline","pipelineId":"e43c86d3-8def-4a87-a746-86bf9405c777","workspaceId":"<WORKSPACE_ID>","parameters":{"email_id":{"value":"@activity('Notify Failure - Mark Emails Sent').output.result.exitValue","type":"Expression"}}}},{"name":"Notify Failure - For Each Admin","type":"TridentNotebook","dependsOn":[{"activity":"For Each Admin","dependencyConditions":["Failed"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"notebookId":"6c30182f-ba5e-4edd-aad2-454bfaf62213","workspaceId":"<WORKSPACE_ID>","parameters":{"activity_name":{"value":"For Each Admin","type":"string"},"error_message":{"value":{"value":"@activity('For Each Admin').Error.message","type":"Expression"},"type":"string"},"pipeline_name":{"value":{"value":"@pipeline().Pipeline","type":"Expression"},"type":"string"},"run_id":{"value":{"value":"@pipeline().RunId","type":"Expression"},"type":"string"},"workspace_id":{"value":"<WORKSPACE_ID>","type":"string"}}},"externalReferences":{"connection":"[parameters('fabric_Monitoring_connection pankaj.bana')]"}},{"name":"Send Failure Alert - For Each Admin","type":"InvokePipeline","dependsOn":[{"activity":"Notify Failure - For Each Admin","dependencyConditions":["Succeeded"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"waitOnCompletion":true,"operationType":"InvokeFabricPipeline","pipelineId":"e43c86d3-8def-4a87-a746-86bf9405c777","workspaceId":"<WORKSPACE_ID>","parameters":{"email_id":{"value":"@activity('Notify Failure - For Each Admin').output.result.exitValue","type":"Expression"}}}},{"name":"Notify Failure - For Each Owner","type":"TridentNotebook","dependsOn":[{"activity":"For Each Owner","dependencyConditions":["Failed"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"notebookId":"6c30182f-ba5e-4edd-aad2-454bfaf62213","workspaceId":"<WORKSPACE_ID>","parameters":{"activity_name":{"value":"For Each Owner","type":"string"},"error_message":{"value":{"value":"@activity('For Each Owner').Error.message","type":"Expression"},"type":"string"},"pipeline_name":{"value":{"value":"@pipeline().Pipeline","type":"Expression"},"type":"string"},"run_id":{"value":{"value":"@pipeline().RunId","type":"Expression"},"type":"string"},"workspace_id":{"value":"<WORKSPACE_ID>","type":"string"}}},"externalReferences":{"connection":"[parameters('fabric_Monitoring_connection pankaj.bana')]"}},{"name":"Send Failure Alert - For Each Owner","type":"InvokePipeline","dependsOn":[{"activity":"Notify Failure - For Each Owner","dependencyConditions":["Succeeded"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"waitOnCompletion":true,"operationType":"InvokeFabricPipeline","pipelineId":"e43c86d3-8def-4a87-a746-86bf9405c777","workspaceId":"<WORKSPACE_ID>","parameters":{"email_id":{"value":"@activity('Notify Failure - For Each Owner').output.result.exitValue","type":"Expression"}}}},{"name":"Notify Failure - For Each Deletion","type":"TridentNotebook","dependsOn":[{"activity":"For Each Deletion","dependencyConditions":["Failed"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"notebookId":"6c30182f-ba5e-4edd-aad2-454bfaf62213","workspaceId":"<WORKSPACE_ID>","parameters":{"activity_name":{"value":"For Each Deletion","type":"string"},"error_message":{"value":{"value":"@activity('For Each Deletion').Error.message","type":"Expression"},"type":"string"},"pipeline_name":{"value":{"value":"@pipeline().Pipeline","type":"Expression"},"type":"string"},"run_id":{"value":{"value":"@pipeline().RunId","type":"Expression"},"type":"string"},"workspace_id":{"value":"<WORKSPACE_ID>","type":"string"}}},"externalReferences":{"connection":"[parameters('fabric_Monitoring_connection pankaj.bana')]"}},{"name":"Send Failure Alert - For Each Deletion","type":"InvokePipeline","dependsOn":[{"activity":"Notify Failure - For Each Deletion","dependencyConditions":["Succeeded"]}],"policy":{"timeout":"0.12:00:00","retry":0,"retryIntervalInSeconds":30,"secureOutput":false,"secureInput":false},"typeProperties":{"waitOnCompletion":true,"operationType":"InvokeFabricPipeline","pipelineId":"e43c86d3-8def-4a87-a746-86bf9405c777","workspaceId":"<WORKSPACE_ID>","parameters":{"email_id":{"value":"@activity('Notify Failure - For Each Deletion').output.result.exitValue","type":"Expression"}}}}],"lastModifiedByObjectId":"bf6f5fb4-25ef-4145-bc42-a3a2046a589e","lastPublishTime":"2026-08-11T07:04:03Z"},"dependsOn":[]}]}
+{
+    "name": "PL_Inventory_Governance",
+    "objectId": "12b5a8df-e77a-4888-a265-1b4c95e95c8b",
+    "properties": {
+        "activities": [
+            {
+                "name": "Run Inventory Scan",
+                "type": "TridentNotebook",
+                "state": "Inactive",
+                "onInactiveMarkAs": "Succeeded",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "notebookId": "1f808240-eecf-4321-8a4c-018c8ec53578",
+                    "workspaceId": "<WORKSPACE_ID>"
+                },
+                "externalReferences": {
+                    "connection": "7c978055-27e6-4434-a7d9-8654917a6e3a"
+                }
+            },
+            {
+                "name": "Run Tracker Update",
+                "type": "TridentNotebook",
+                "dependsOn": [
+                    {
+                        "activity": "Run Inventory Scan",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "notebookId": "69edc823-7a6e-40d9-9448-d2803c368b6c",
+                    "workspaceId": "<WORKSPACE_ID>"
+                },
+                "externalReferences": {
+                    "connection": "7c978055-27e6-4434-a7d9-8654917a6e3a"
+                }
+            },
+            {
+                "name": "Generate Emails",
+                "type": "TridentNotebook",
+                "dependsOn": [
+                    {
+                        "activity": "Run Tracker Update",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "notebookId": "ed2e31ab-2321-4b73-9ae4-a333990925dc",
+                    "workspaceId": "<WORKSPACE_ID>"
+                },
+                "externalReferences": {
+                    "connection": "7c978055-27e6-4434-a7d9-8654917a6e3a"
+                }
+            },
+            {
+                "name": "Lookup Admin Emails",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "Generate Emails",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "source": {
+                        "type": "DataWarehouseSource",
+                        "sqlReaderQuery": "SELECT * FROM Governance.email_outbox WHERE email_type = 'admin_report' AND status = 'pending'",
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "datasetSettings": {
+                        "annotations": [],
+                        "linkedService": {
+                            "name": "DW_Fabric",
+                            "properties": {
+                                "annotations": [],
+                                "type": "DataWarehouse",
+                                "typeProperties": {
+                                    "endpoint": "<WAREHOUSE_SQL_ENDPOINT>",
+                                    "artifactId": "0e729b5d-7a2e-4387-8efb-a7077c8d2be2",
+                                    "workspaceId": "<WORKSPACE_ID>"
+                                }
+                            }
+                        },
+                        "type": "DataWarehouseTable",
+                        "schema": []
+                    },
+                    "firstRowOnly": false
+                }
+            },
+            {
+                "name": "For Each Admin",
+                "type": "ForEach",
+                "dependsOn": [
+                    {
+                        "activity": "Lookup Admin Emails",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "typeProperties": {
+                    "items": {
+                        "value": "@activity('Lookup Admin Emails').output.value",
+                        "type": "Expression"
+                    },
+                    "isSequential": true,
+                    "activities": [
+                        {
+                            "name": "Send Admin Report",
+                            "type": "Office365Email",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "typeProperties": {
+                                "to": {
+                                    "value": "@item().recipient",
+                                    "type": "Expression"
+                                },
+                                "subject": {
+                                    "value": "@item().subject",
+                                    "type": "Expression"
+                                },
+                                "body": "@item().body_html"
+                            },
+                            "externalReferences": {
+                                "connection": "d9ee40cf-bd54-416a-9c4f-a13c99a92793"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "Lookup Owner Emails",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "Generate Emails",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "source": {
+                        "type": "DataWarehouseSource",
+                        "sqlReaderQuery": "SELECT * FROM Governance.email_outbox WHERE (email_type LIKE 'owner_warning%' OR email_type LIKE 'orphan_warning%') AND status = 'pending'",
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "datasetSettings": {
+                        "annotations": [],
+                        "linkedService": {
+                            "name": "DW_Fabric",
+                            "properties": {
+                                "annotations": [],
+                                "type": "DataWarehouse",
+                                "typeProperties": {
+                                    "endpoint": "<WAREHOUSE_SQL_ENDPOINT>",
+                                    "artifactId": "0e729b5d-7a2e-4387-8efb-a7077c8d2be2",
+                                    "workspaceId": "<WORKSPACE_ID>"
+                                }
+                            }
+                        },
+                        "type": "DataWarehouseTable",
+                        "schema": []
+                    },
+                    "firstRowOnly": false
+                }
+            },
+            {
+                "name": "For Each Owner",
+                "type": "ForEach",
+                "dependsOn": [
+                    {
+                        "activity": "Lookup Owner Emails",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "typeProperties": {
+                    "items": {
+                        "value": "@activity('Lookup Owner Emails').output.value",
+                        "type": "Expression"
+                    },
+                    "isSequential": true,
+                    "activities": [
+                        {
+                            "name": "Send Owner Email",
+                            "type": "Office365Email",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "typeProperties": {
+                                "to": {
+                                    "value": "@item().recipient",
+                                    "type": "Expression"
+                                },
+                                "subject": {
+                                    "value": "@item().subject",
+                                    "type": "Expression"
+                                },
+                                "body": "@item().body_html"
+                            },
+                            "externalReferences": {
+                                "connection": "d9ee40cf-bd54-416a-9c4f-a13c99a92793"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "Lookup Auto Delete Flag",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "For Each Admin",
+                        "dependencyConditions": [
+                            "Completed"
+                        ]
+                    },
+                    {
+                        "activity": "For Each Owner",
+                        "dependencyConditions": [
+                            "Completed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "source": {
+                        "type": "DataWarehouseSource",
+                        "sqlReaderQuery": "SELECT config_value FROM Governance.governance_config WHERE config_key = 'enable_auto_delete'",
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "datasetSettings": {
+                        "annotations": [],
+                        "linkedService": {
+                            "name": "DW_Fabric",
+                            "properties": {
+                                "annotations": [],
+                                "type": "DataWarehouse",
+                                "typeProperties": {
+                                    "endpoint": "<WAREHOUSE_SQL_ENDPOINT>",
+                                    "artifactId": "0e729b5d-7a2e-4387-8efb-a7077c8d2be2",
+                                    "workspaceId": "<WORKSPACE_ID>"
+                                }
+                            }
+                        },
+                        "type": "DataWarehouseTable",
+                        "schema": []
+                    },
+                    "firstRowOnly": true
+                }
+            },
+            {
+                "name": "Check Auto Delete Enabled",
+                "type": "IfCondition",
+                "dependsOn": [
+                    {
+                        "activity": "Lookup Auto Delete Flag",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "typeProperties": {
+                    "expression": {
+                        "value": "@equals(toLower(activity('Lookup Auto Delete Flag').output.firstRow.config_value), 'true')",
+                        "type": "Expression"
+                    },
+                    "ifFalseActivities": [],
+                    "ifTrueActivities": [
+                        {
+                            "name": "Run Auto Delete",
+                            "type": "TridentNotebook",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "typeProperties": {
+                                "notebookId": "dfd4c486-f1b9-48c9-8993-ab95ba988443",
+                                "workspaceId": "<WORKSPACE_ID>"
+                            },
+                            "externalReferences": {
+                                "connection": "7c978055-27e6-4434-a7d9-8654917a6e3a"
+                            }
+                        },
+                        {
+                            "name": "Send Failure Alert - Run Auto Delete",
+                            "type": "InvokePipeline",
+                            "dependsOn": [
+                                {
+                                    "activity": "Run Auto Delete",
+                                    "dependencyConditions": [
+                                        "Failed"
+                                    ]
+                                }
+                            ],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "typeProperties": {
+                                "waitOnCompletion": true,
+                                "operationType": "InvokeFabricPipeline",
+                                "pipelineId": "e43c86d3-8def-4a87-a746-86bf9405c777",
+                                "workspaceId": "<WORKSPACE_ID>",
+                                "parameters": {
+                                    "activity_name": {
+                                        "value": "Run Auto Delete",
+                                        "type": "string"
+                                    },
+                                    "error_message": {
+                                        "value": "@activity('Run Auto Delete').Error.message",
+                                        "type": "Expression"
+                                    },
+                                    "pipeline_name": {
+                                        "value": "@pipeline().Pipeline",
+                                        "type": "Expression"
+                                    },
+                                    "run_id": {
+                                        "value": "@pipeline().RunId",
+                                        "type": "Expression"
+                                    },
+                                    "workspace_id": {
+                                        "value": "<WORKSPACE_ID>",
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "externalReferences": {
+                                "connection": "2ced5b04-5531-434a-b14c-60d1f7ed19e2"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "Lookup Deletion Emails",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "Check Auto Delete Enabled",
+                        "dependencyConditions": [
+                            "Completed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "source": {
+                        "type": "DataWarehouseSource",
+                        "sqlReaderQuery": "SELECT * FROM Governance.email_outbox WHERE email_type = 'deletion_confirmation' AND status = 'pending'",
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "datasetSettings": {
+                        "annotations": [],
+                        "linkedService": {
+                            "name": "DW_Fabric",
+                            "properties": {
+                                "annotations": [],
+                                "type": "DataWarehouse",
+                                "typeProperties": {
+                                    "endpoint": "<WAREHOUSE_SQL_ENDPOINT>",
+                                    "artifactId": "0e729b5d-7a2e-4387-8efb-a7077c8d2be2",
+                                    "workspaceId": "<WORKSPACE_ID>"
+                                }
+                            }
+                        },
+                        "type": "DataWarehouseTable",
+                        "schema": []
+                    },
+                    "firstRowOnly": false
+                }
+            },
+            {
+                "name": "For Each Deletion",
+                "type": "ForEach",
+                "dependsOn": [
+                    {
+                        "activity": "Lookup Deletion Emails",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "typeProperties": {
+                    "items": {
+                        "value": "@activity('Lookup Deletion Emails').output.value",
+                        "type": "Expression"
+                    },
+                    "isSequential": true,
+                    "activities": [
+                        {
+                            "name": "Send Deletion Email",
+                            "type": "Office365Email",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "typeProperties": {
+                                "to": {
+                                    "value": "@item().recipient",
+                                    "type": "Expression"
+                                },
+                                "subject": {
+                                    "value": "@item().subject",
+                                    "type": "Expression"
+                                },
+                                "body": "@item().body_html"
+                            },
+                            "externalReferences": {
+                                "connection": "d9ee40cf-bd54-416a-9c4f-a13c99a92793"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "Mark Emails Sent",
+                "type": "TridentNotebook",
+                "dependsOn": [
+                    {
+                        "activity": "For Each Deletion",
+                        "dependencyConditions": [
+                            "Completed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "notebookId": "17ce21c9-00e1-42db-afa6-4fbf1afe67b6",
+                    "workspaceId": "<WORKSPACE_ID>"
+                },
+                "externalReferences": {
+                    "connection": "7c978055-27e6-4434-a7d9-8654917a6e3a"
+                }
+            },
+            {
+                "name": "Send Failure Alert - Run Inventory Scan",
+                "type": "InvokePipeline",
+                "dependsOn": [
+                    {
+                        "activity": "Run Inventory Scan",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "waitOnCompletion": true,
+                    "operationType": "InvokeFabricPipeline",
+                    "pipelineId": "e43c86d3-8def-4a87-a746-86bf9405c777",
+                    "workspaceId": "<WORKSPACE_ID>",
+                    "parameters": {
+                        "activity_name": {
+                            "value": "Run Inventory Scan",
+                            "type": "string"
+                        },
+                        "error_message": {
+                            "value": "@activity('Run Inventory Scan').Error.message",
+                            "type": "Expression"
+                        },
+                        "pipeline_name": {
+                            "value": "@pipeline().Pipeline",
+                            "type": "Expression"
+                        },
+                        "run_id": {
+                            "value": "@pipeline().RunId",
+                            "type": "Expression"
+                        },
+                        "workspace_id": {
+                            "value": "<WORKSPACE_ID>",
+                            "type": "string"
+                        }
+                    }
+                },
+                "externalReferences": {
+                    "connection": "2ced5b04-5531-434a-b14c-60d1f7ed19e2"
+                }
+            },
+            {
+                "name": "Send Failure Alert - Run Tracker Update",
+                "type": "InvokePipeline",
+                "dependsOn": [
+                    {
+                        "activity": "Run Tracker Update",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "waitOnCompletion": true,
+                    "operationType": "InvokeFabricPipeline",
+                    "pipelineId": "e43c86d3-8def-4a87-a746-86bf9405c777",
+                    "workspaceId": "<WORKSPACE_ID>",
+                    "parameters": {
+                        "activity_name": {
+                            "value": "Run Tracker Update",
+                            "type": "string"
+                        },
+                        "error_message": {
+                            "value": "@activity('Run Tracker Update').Error.message",
+                            "type": "Expression"
+                        },
+                        "pipeline_name": {
+                            "value": "@pipeline().Pipeline",
+                            "type": "Expression"
+                        },
+                        "run_id": {
+                            "value": "@pipeline().RunId",
+                            "type": "Expression"
+                        },
+                        "workspace_id": {
+                            "value": "<WORKSPACE_ID>",
+                            "type": "string"
+                        }
+                    }
+                },
+                "externalReferences": {
+                    "connection": "2ced5b04-5531-434a-b14c-60d1f7ed19e2"
+                }
+            },
+            {
+                "name": "Send Failure Alert - Generate Emails",
+                "type": "InvokePipeline",
+                "dependsOn": [
+                    {
+                        "activity": "Generate Emails",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "waitOnCompletion": true,
+                    "operationType": "InvokeFabricPipeline",
+                    "pipelineId": "e43c86d3-8def-4a87-a746-86bf9405c777",
+                    "workspaceId": "<WORKSPACE_ID>",
+                    "parameters": {
+                        "activity_name": {
+                            "value": "Generate Emails",
+                            "type": "string"
+                        },
+                        "error_message": {
+                            "value": "@activity('Generate Emails').Error.message",
+                            "type": "Expression"
+                        },
+                        "pipeline_name": {
+                            "value": "@pipeline().Pipeline",
+                            "type": "Expression"
+                        },
+                        "run_id": {
+                            "value": "@pipeline().RunId",
+                            "type": "Expression"
+                        },
+                        "workspace_id": {
+                            "value": "<WORKSPACE_ID>",
+                            "type": "string"
+                        }
+                    }
+                },
+                "externalReferences": {
+                    "connection": "2ced5b04-5531-434a-b14c-60d1f7ed19e2"
+                }
+            },
+            {
+                "name": "Send Failure Alert - Mark Emails Sent",
+                "type": "InvokePipeline",
+                "dependsOn": [
+                    {
+                        "activity": "Mark Emails Sent",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "waitOnCompletion": true,
+                    "operationType": "InvokeFabricPipeline",
+                    "pipelineId": "e43c86d3-8def-4a87-a746-86bf9405c777",
+                    "workspaceId": "<WORKSPACE_ID>",
+                    "parameters": {
+                        "activity_name": {
+                            "value": "Mark Emails Sent",
+                            "type": "string"
+                        },
+                        "error_message": {
+                            "value": "@activity('Mark Emails Sent').Error.message",
+                            "type": "Expression"
+                        },
+                        "pipeline_name": {
+                            "value": "@pipeline().Pipeline",
+                            "type": "Expression"
+                        },
+                        "run_id": {
+                            "value": "@pipeline().RunId",
+                            "type": "Expression"
+                        },
+                        "workspace_id": {
+                            "value": "<WORKSPACE_ID>",
+                            "type": "string"
+                        }
+                    }
+                },
+                "externalReferences": {
+                    "connection": "2ced5b04-5531-434a-b14c-60d1f7ed19e2"
+                }
+            },
+            {
+                "name": "Send Failure Alert - For Each Admin",
+                "type": "InvokePipeline",
+                "dependsOn": [
+                    {
+                        "activity": "For Each Admin",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "waitOnCompletion": true,
+                    "operationType": "InvokeFabricPipeline",
+                    "pipelineId": "e43c86d3-8def-4a87-a746-86bf9405c777",
+                    "workspaceId": "<WORKSPACE_ID>",
+                    "parameters": {
+                        "activity_name": {
+                            "value": "For Each Admin",
+                            "type": "string"
+                        },
+                        "error_message": {
+                            "value": "@activity('For Each Admin').Error.message",
+                            "type": "Expression"
+                        },
+                        "pipeline_name": {
+                            "value": "@pipeline().Pipeline",
+                            "type": "Expression"
+                        },
+                        "run_id": {
+                            "value": "@pipeline().RunId",
+                            "type": "Expression"
+                        },
+                        "workspace_id": {
+                            "value": "<WORKSPACE_ID>",
+                            "type": "string"
+                        }
+                    }
+                },
+                "externalReferences": {
+                    "connection": "2ced5b04-5531-434a-b14c-60d1f7ed19e2"
+                }
+            },
+            {
+                "name": "Send Failure Alert - For Each Owner",
+                "type": "InvokePipeline",
+                "dependsOn": [
+                    {
+                        "activity": "For Each Owner",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "waitOnCompletion": true,
+                    "operationType": "InvokeFabricPipeline",
+                    "pipelineId": "e43c86d3-8def-4a87-a746-86bf9405c777",
+                    "workspaceId": "<WORKSPACE_ID>",
+                    "parameters": {
+                        "activity_name": {
+                            "value": "For Each Owner",
+                            "type": "string"
+                        },
+                        "error_message": {
+                            "value": "@activity('For Each Owner').Error.message",
+                            "type": "Expression"
+                        },
+                        "pipeline_name": {
+                            "value": "@pipeline().Pipeline",
+                            "type": "Expression"
+                        },
+                        "run_id": {
+                            "value": "@pipeline().RunId",
+                            "type": "Expression"
+                        },
+                        "workspace_id": {
+                            "value": "<WORKSPACE_ID>",
+                            "type": "string"
+                        }
+                    }
+                },
+                "externalReferences": {
+                    "connection": "2ced5b04-5531-434a-b14c-60d1f7ed19e2"
+                }
+            },
+            {
+                "name": "Send Failure Alert - For Each Deletion",
+                "type": "InvokePipeline",
+                "dependsOn": [
+                    {
+                        "activity": "For Each Deletion",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "waitOnCompletion": true,
+                    "operationType": "InvokeFabricPipeline",
+                    "pipelineId": "e43c86d3-8def-4a87-a746-86bf9405c777",
+                    "workspaceId": "<WORKSPACE_ID>",
+                    "parameters": {
+                        "activity_name": {
+                            "value": "For Each Deletion",
+                            "type": "string"
+                        },
+                        "error_message": {
+                            "value": "@activity('For Each Deletion').Error.message",
+                            "type": "Expression"
+                        },
+                        "pipeline_name": {
+                            "value": "@pipeline().Pipeline",
+                            "type": "Expression"
+                        },
+                        "run_id": {
+                            "value": "@pipeline().RunId",
+                            "type": "Expression"
+                        },
+                        "workspace_id": {
+                            "value": "<WORKSPACE_ID>",
+                            "type": "string"
+                        }
+                    }
+                },
+                "externalReferences": {
+                    "connection": "2ced5b04-5531-434a-b14c-60d1f7ed19e2"
+                }
+            }
+        ],
+        "lastModifiedByObjectId": "bf6f5fb4-25ef-4145-bc42-a3a2046a589e",
+        "lastPublishTime": "2026-08-11T18:27:49Z"
+    }
+}
