@@ -1,7 +1,7 @@
 # Fabric Workspace Governance Automation — Project README
 
 **Project:** Fabric-Monitoring-POC
-**Owner:** Pankaj Bana
+**Owner:** Suryadev Rathore
 **Workspace:** MS Fabric Demo (`<WORKSPACE_ID>`)
 **Governance admin (report recipient):** <ADMIN_EMAIL>
 **Status:** In testing (notification-only; auto-delete disabled)
@@ -62,14 +62,14 @@ Fabric-Monitoring-POC/
 │   ├── Fabric_Workspace_Inventory_v3                     merged approach, early
 │   ├── Fabric_Workspace_Inventory_v3.1                   + activity events fixes
 │   ├── Fabric_Workspace_Inventory_v3.2                   + all field/serialization fixes
+│   ├── Governance_Mark_Emails_Sent                       replaced by a Script activity in the pipeline
 │   └── Test_Outlook                                      throwaway email-delivery test
 │
-├── Governance/                     (the automation engine — 6 notebooks)
+├── Governance/                     (the automation engine — 5 notebooks)
 │   ├── Governance_Table_Setup            creates the Governance schema + tables in DW_Fabric (run once)
 │   ├── Governance_Tracker_Update         escalation logic (the brain)
 │   ├── Governance_Email_Generator        builds HTML emails
 │   ├── Governance_Auto_Delete            deletes items past 3 warnings
-│   ├── Governance_Mark_Emails_Sent       flips outbox rows to 'sent'
 │   └── Governance_Failure_Notifier       builds a pipeline-failure alert email (called on activity failure)
 │
 ├── Inventory/
@@ -158,15 +158,6 @@ Warehouse, and seeds default config.
   status = deletion_ready, type not protected, id not protected, item still exists,
   active-item guard re-check.
 
-#### `Governance_Mark_Emails_Sent` (Governance/)
-**Housekeeping.** Runs last in the pipeline.
-
-- **Reads from:** `email_outbox`
-- **Writes to:** `email_outbox` (flips `pending` → `sent`)
-- **Permission:** Contributor
-- **Why it exists:** the pipeline's filters pick up `status = 'pending'`. Without this step, every
-  run would resend the entire outbox history.
-
 #### `Governance_Failure_Notifier` (Governance/)
 **Called on failure, not on a schedule.** The pipeline attaches this notebook to 8 critical
 activities (5 governance notebooks + the 3 owner/admin/deletion email send-loops) via a
@@ -189,6 +180,14 @@ activities (5 governance notebooks + the 3 owner/admin/deletion email send-loops
   list, creation timeline, modifier activity, governance scorecard, lakehouse ecosystem.
 - Run any cell independently against the latest snapshot.
 
+**Where did `Governance_Mark_Emails_Sent` go?** It's archived — see 4.2. Once its logic was
+simplified down to a single `UPDATE` + `DELETE` (no Python left at all), running it as a
+`TridentNotebook` pipeline activity meant paying Spark session start-up cost for two SQL
+statements, and it inherited the same notebook-execution-identity issues affecting every other
+`TridentNotebook` activity in the pipeline (see `PL_Inventory_Governance`'s `Mark Emails Sent`
+activity, now a native **Script** activity running directly against `DW_Fabric`, no notebook
+involved).
+
 ### 4.2 Archived notebooks (history — not run)
 
 | Notebook | What it was | Why archived |
@@ -198,6 +197,7 @@ activities (5 governance notebooks + the 3 owner/admin/deletion email send-loops
 | `Fabric_Workspace_Inventory_v3` | Merged both approaches | Activity Events returned 0 (wrong endpoint) |
 | `Fabric_Workspace_Inventory_v3.1` | Fixed the endpoint | Bool→NaN serialization, Scanner dict issues |
 | `Fabric_Workspace_Inventory_v3.2` | All single-workspace fixes working | Superseded by v4 (multi-workspace) |
+| `Governance_Mark_Emails_Sent` | Flipped outbox rows `pending`→`sent`, purged 30-day-old rows | Down to 2 SQL statements — replaced by a native pipeline `Script` activity, no Spark session needed |
 | `Test_Outlook` | One-activity email test | Purpose served (confirmed Outlook works) |
 
 **The evolution in one line:** two separate proof-of-concepts → merged (v3) → endpoint fixes
@@ -209,8 +209,9 @@ activities (5 governance notebooks + the 3 owner/admin/deletion email send-loops
 
 All tables live in the `Governance` schema of the `DW_Fabric` Warehouse (migrated from the
 original `LK_Fabric` Lakehouse/Delta implementation — every notebook now connects via raw
-`pyodbc` + an AAD token instead of `spark.sql`, and every column is `NVARCHAR` to match the
-original string-everywhere convention).
+`pyodbc` + an AAD token instead of `spark.sql`, and every column is `VARCHAR` to match the
+original string-everywhere convention — Fabric Data Warehouse does not support `NVARCHAR`/`NCHAR`
+at all; it stores Unicode text in `VARCHAR` columns under a UTF-8 collation instead).
 
 ### `workspace_inventory_snapshot`
 The raw inventory. One row per item per scan. Appended each run (history preserved via
@@ -262,8 +263,8 @@ created_at, workspace_id.
 **email_type values:** admin_report, owner_warning_1/2/3, orphan_warning_1/2/3,
 deletion_confirmation, **pipeline_failure_alert**.
 **status values:** pending → sent (or failed). `pipeline_failure_alert` rows are fire-and-forget —
-they're never run through `Governance_Mark_Emails_Sent`, since that notebook only runs at the end
-of a *successful* main chain, which may not be reached if something failed.
+they're never run through the `Mark Emails Sent` Script activity, since that step only runs at
+the end of a *successful* main chain, which may not be reached if something failed.
 
 ### `deleted_items_archive`
 Full metadata snapshot of every item, written by `Governance_Auto_Delete` **immediately before**
@@ -333,9 +334,11 @@ Run Inventory Scan          [DEACTIVATED during testing — needs Fabric Admin]
                                   └→ Check Auto Delete Enabled
                                        ├ True: Run Auto Delete
                                        └ False: (empty)
-                                       └→ Lookup Deletion Emails  (targeted SQL: email_type='deletion_confirmation' AND status='pending')
+                                       └→ Lookup Deletion Emails  (targeted SQL: email_type IN (deletion_confirmation,
+                                                                    deletion_manual_action_required, deletion_summary_admin) AND status='pending')
                                             └→ For Each Deletion → Send Deletion Email
-                                                 └→ Mark Emails Sent
+                                                 └→ Mark Emails Sent  (Script activity — UPDATE + DELETE against DW_Fabric,
+                                                                        no longer a notebook)
 ```
 
 **Warehouse Lookups, not Lakehouse + Filter.** Since the backend moved to `DW_Fabric`, every
@@ -348,37 +351,55 @@ run one after another). `Check Auto Delete Enabled` now waits on **both** parall
 completing before it runs, since it used to depend only on `For Each Owner` back when Owner ran
 strictly after Admin.
 
-> ⚠️ **Before you ever activate "Run Inventory Scan":** its `notebookId` in the pipeline JSON is
-> currently the literal placeholder `PASTE_INVENTORY_V32_NOTEBOOK_ID_HERE` — it was never filled
-> in with a real notebook ID. Flipping this stage's state to `Active` without replacing that
-> placeholder will fail immediately. Upload `Fabric_Workspace_Inventory_v4` to the workspace, copy
-> its real notebook ID, and paste it in via **View → Edit JSON code** on this activity before
-> activating.
+> ⚠️ **Run Inventory Scan starts deactivated** (`"state": "Inactive"`) since it needs Fabric
+> Admin. Activating it is a deliberate decision, not a config step you're expected to flip during
+> setup — leave it off until you're ready to scan the real workspace.
 
-> ⚠️ **Failure alerts also need a real notebook ID, and a child pipeline created first.** The 8
-> `"Notify Failure - ..."` activities reference the placeholder
-> `PASTE_FAILURE_NOTIFIER_NOTEBOOK_ID_HERE` — upload `Governance_Failure_Notifier` and paste its
-> real notebook ID in the same way. Separately, create `PL_Send_Failure_Alert` as its own pipeline
-> item first (paste in `Pipeline/PL_Send_Failure_Alert/PL_Send_Failure_Alert.json`), copy *its*
-> item ID, and paste that into the 8 `"Send Failure Alert - ..."` activities' `pipelineId`
-> (currently `PASTE_SEND_FAILURE_ALERT_PIPELINE_ID_HERE`) — that child pipeline must exist before
-> `PL_Inventory_Governance` can call it.
+**Failure alerts:** every governance activity, plus the 3 owner/admin/deletion email send-loops,
+has a parallel failure branch: `[Activity] --(Failed)--> Send Failure Alert (Invoke pipeline)`.
+Unlike an earlier design, there is **no per-activity notebook** in the main pipeline anymore —
+each branch is a single `InvokePipeline` call straight off the source activity's `Failed`
+condition, passing `activity_name`/`error_message`/`pipeline_name`/`run_id`/`workspace_id` as
+parameters. All the actual notebook work happens **once**, inside the child pipeline itself:
+`PL_Send_Failure_Alert` runs `Notify Failure` (→ `Governance_Failure_Notifier`, which builds the
+branded HTML and writes one row to `email_outbox`, then exits with that row's `email_id`) →
+`Lookup Outbox` (targeted Warehouse query for `status='pending'`) → `Filter Alert` → `For Each
+Alert` → `Send Office365Email`. `Filter Alert` is the one remaining `Lookup + Filter` pair in the
+project — it narrows to the exact dynamic `email_id` returned by `Notify Failure`, which needs
+the pipeline's own expression engine, not a static SQL `WHERE` clause, so it wasn't folded into
+the Lookup like the others. Collapsing the per-activity notebook into the child pipeline (instead
+of duplicating it 8 times across the main canvas) also means every `TridentNotebook` activity's
+parameters into `Notify Failure` must use Fabric's double-nested `{"value": {"value":
+"@pipeline().parameters.X", "type": "Expression"}, "type": "string"}` form for dynamic content —
+a single-wrapped form silently stringifies the raw parameter object instead of evaluating it,
+which showed up as a `String or binary data would be truncated` error on the `workspace_id`
+column the first time this was wired up.
 
-**Failure alerts:** every governance notebook, plus the 3 owner/admin/deletion email send-loops,
-has a parallel failure branch: `[Activity] --(Failed)--> Notify Failure notebook → Send Failure
-Alert (Invoke pipeline)`. The notebook builds the branded HTML and writes one row to
-`email_outbox`; the "Invoke pipeline" step calls the separate `PL_Send_Failure_Alert` pipeline,
-passing that row's exact `email_id` (via `notebookutils.notebook.exit(...)`), which does the
-actual `Lookup Outbox → Filter Alert → For Each Alert → Send Office365Email` delivery (the one
-remaining Lookup+Filter pair in the project — `Filter Alert` narrows to the exact dynamic
-`email_id` returned by `Notify Failure`, which needs the pipeline's own expression engine, not a
-static SQL `WHERE` clause, so it wasn't folded into the Lookup like the others). This lives
-in its own pipeline rather than inline so the same delivery logic isn't duplicated 8 times across
-the main canvas. It fires independently of the main success chain, so one activity's failure never
-blocks another's alert, and it works no matter where in the pipeline the failure happened.
-Filtering on the specific `email_id` (not just the run ID) matters because if two activities fail
-in the same run, each branch's `Notify Failure` step writes its own outbox row — without matching
-on the exact `email_id`, every branch would re-match every alert from that run and send
+**A note on `TridentNotebook` execution identity:** a notebook run interactively (by opening it
+and clicking Run) authenticates as *you*. The same notebook run as a pipeline activity does
+**not** — it authenticates as whatever's bound to that activity's connection, which for a
+`Notebook`-type Fabric connection can only ever be **Service principal** or **Workspace
+identity**, never a real delegated user session, regardless of what the connection's own
+properties page shows. This is why `Governance_Auto_Delete` can succeed manually and still fail
+with 401/403 on `Dataflow`/RTI items when triggered by the pipeline — confirmed by decoding the
+acquired token's JWT claims (`idtyp: app` vs `idtyp: user`, different `oid`/`appid` entirely) in
+both execution contexts. The durable fix is a properly-scoped Service Principal added to the
+target workspace(s) with real membership, not chasing this as a code bug.
+
+**A note on why `Mark Emails Sent` is a `Script` activity, not a notebook:** once its logic was
+down to a single `UPDATE` + `DELETE`, running it as a `TridentNotebook` meant paying Spark
+session start-up cost for two SQL statements *and* inheriting the identity issue above. A native
+`Script` activity runs the same SQL directly against `DW_Fabric` via the pipeline's own Warehouse
+connection — no Spark session, no notebook-identity ambiguity. Worth considering for any other
+notebook step that's shrunk down to pure SQL with no real Python logic left.
+
+This whole failure-alert flow lives in its own child pipeline rather than inline in the main one
+so the same delivery logic isn't duplicated 8 times across the main canvas. It fires
+independently of the main success chain, so one activity's failure never blocks another's alert,
+and it works no matter where in the pipeline the failure happened. Filtering on the specific
+`email_id` (not just the run ID) matters because if two activities fail in the same run,
+`Notify Failure` writes a separate outbox row each time it's invoked — without matching on the
+exact `email_id`, the child pipeline would re-match every alert from that run and send
 duplicates. One email per failure event — see `Governance/Governance_Failure_Notifier.ipynb` for
 what it contains and its limitations (a failed `ForEach` reports the loop failing as a whole, not
 which specific recipient's send failed). Recipient is `pipeline_failure_notify_email` in
