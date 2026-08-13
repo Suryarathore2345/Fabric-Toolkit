@@ -495,7 +495,7 @@
             },
             {
                 "name": "Mark Emails Sent",
-                "type": "TridentNotebook",
+                "type": "Script",
                 "dependsOn": [
                     {
                         "activity": "For Each Deletion",
@@ -511,12 +511,33 @@
                     "secureOutput": false,
                     "secureInput": false
                 },
-                "typeProperties": {
-                    "notebookId": "17ce21c9-00e1-42db-afa6-4fbf1afe67b6",
-                    "workspaceId": "<WORKSPACE_ID>"
+                "connectionSettings": {
+                    "name": "DW_Fabric",
+                    "properties": {
+                        "annotations": [],
+                        "type": "DataWarehouse",
+                        "typeProperties": {
+                            "endpoint": "<WAREHOUSE_SQL_ENDPOINT>",
+                            "artifactId": "0e729b5d-7a2e-4387-8efb-a7077c8d2be2",
+                            "workspaceId": "<WORKSPACE_ID>"
+                        },
+                        "externalReferences": {
+                            "connection": "96ed45a3-4b88-4576-b823-bae5a7ae9ee9"
+                        }
+                    }
                 },
-                "externalReferences": {
-                    "connection": "7c978055-27e6-4434-a7d9-8654917a6e3a"
+                "typeProperties": {
+                    "scripts": [
+                        {
+                            "type": "NonQuery",
+                            "text": "UPDATE Governance.email_outbox\nSET status = 'sent', sent_at = FORMAT(SYSUTCDATETIME(), 'yyyy-MM-ddTHH:mm:ss.ffffff') + '+00:00'\nWHERE status = 'pending';\n\nDELETE FROM Governance.email_outbox\nWHERE created_at < FORMAT(DATEADD(DAY, -30, SYSUTCDATETIME()), 'yyyy-MM-ddTHH:mm:ss.ffffff') + '+00:00';"
+                        },
+                        {
+                            "type": "Query",
+                            "text": "SELECT status, COUNT(*) AS item_count FROM Governance.email_outbox GROUP BY status ORDER BY status;"
+                        }
+                    ],
+                    "scriptBlockExecutionTimeout": "02:00:00"
                 }
             },
             {
